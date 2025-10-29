@@ -1,0 +1,232 @@
+---
+title: "Visualization Template (Hints) – Corrie Kelleigh"
+author: "MEJO 570 – Fall 2025"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# How to use this template
+
+1.  Replace the **HINT** comments with your own code.
+2.  Start with Chart A and Chart B below. Keep it simple and readable.
+3.  When a chunk is ready, change its option from `eval=FALSE` to `eval=TRUE` and knit.
+4.  Add a 1–2 sentence **Takeaway** under each chart in plain English.
+5.  Export PNGs with `ggsave()` for your pitch package when you're done.
+
+------------------------------------------------------------------------
+
+# Setup
+
+```{r setup, eval=TRUE, message=FALSE, warning=FALSE}
+
+pacman::p_load(tidyverse, tidycensus, janitor, lubridate, dpylr, ggplot2, zipcodeR, crosswalkr)
+
+nyt_mc <- read_csv("data.csv", col_types = cols(ID = col_character(), 
+                                                `Child's Date of Entry` = col_date(format = "%m/%d/%y"), 
+                                                `Child's Date of Release` = col_date(format = "%m/%d/%y"), 
+                                                `Sponsor Category` = col_character()))
+nyt_mc <- clean_names(nyt_mc)
+
+
+```
+
+------------------------------------------------------------------------
+
+# Visuals for Draft Pitch
+
+This document holds two charts that support your **draft story pitch**: - **Chart A:** Group comparison (e.g., top ZIPs/counties or sponsor_type categories) - **Chart B:** Change over time (monthly or quarterly)
+
+For each chart below, follow the **HINTS** to build your code.
+
+------------------------------------------------------------------------
+
+## Chart A — Group comparison (bar or dot)
+
+**Goal:** Compare values across groups (e.g., top 10 ZIP codes or counties).
+
+```{r chartA, eval=TRUE, message=FALSE, warning=FALSE}
+
+guatemala <- nyt_mc %>%
+  filter(childs_country_of_origin == "Guatemala") %>%
+  mutate(days_in = as.integer(as.Date(childs_date_of_release) - as.Date(childs_date_of_entry))) %>%
+  group_by(relationship_of_sponsor) %>%
+  summarise(days =median(days_in)) %>%
+  ggplot(aes(x=relationship_of_sponsor, y=days)) +
+  geom_col()
+
+```
+
+```{r chartB_bar, eval=TRUE, message=FALSE, warning=FALSE}
+
+guat_top5_df <- nyt_mc %>%
+  filter(childs_country_of_origin == "Guatemala") %>%
+  mutate(days_in = as.numeric(childs_date_of_release - childs_date_of_entry)) %>%
+  group_by(relationship_of_sponsor) %>%
+  summarise(days = median(days_in, na.rm = TRUE), .groups = "drop") %>%
+  slice_max(days, n = 5)
+
+guat_top5 <- ggplot(guat_top5_df,
+                    aes(x = reorder(relationship_of_sponsor, days), y = days)) +
+  geom_col(fill = "#f6b0bb") +                
+  labs(
+    title = "Top 5 Sponsor Types Linked to Longer Detention Times",
+    subtitle = "Median detention days among Guatemalan migrant children, by sponsor relationship.",
+    caption = "Source: NYT Data",
+    x = "Relationship of Sponsor",
+    y = "Median Days in Detention Center"
+  )
+
+guat_top5
+ggsave("guat_top5.png", guat_top5, width = 8, height = 5, dpi = 300)
+```
+
+## **Takeaway (1–2 sentences):** Guatemalan children sponsored by UC’s spouse faced the longest median detention times, even longer than those sponsored by unrelated adults. UC means unaccompanied child, which implies cases where minors are married, which raises some legal and ethical questions.
+
+## Chart B — Change over time (line)
+
+**Goal:** Show monthly or quarterly change (counts or rates).
+
+**sanity check**
+
+```{r}
+class(guatemala)
+```
+
+**Data load**
+
+```{r chartA_line, eval=TRUE, message=FALSE, warning=FALSE}
+guatemala <- nyt_mc %>%
+  filter(childs_country_of_origin == "Guatemala") %>%
+  mutate(
+    childs_date_of_entry   = as.Date(childs_date_of_entry),
+    childs_date_of_release = as.Date(childs_date_of_release),
+    days_in = as.integer(childs_date_of_release - childs_date_of_entry)
+  )
+```
+
+**Line Chart**
+
+```{r chartB_line, eval=TRUE, message=FALSE, warning=FALSE}
+  
+guat_year <- guatemala %>%
+  mutate(year = year(childs_date_of_entry)) %>%
+  group_by(year) %>%
+  summarise(days = median(days_in, na.rm = TRUE), .groups = "drop")
+
+guat_year %>%
+  ggplot(aes(x=as.numeric(year), y=as.numeric(days))) +
+  geom_line() +
+  geom_point() +
+  geom_line() +
+  geom_point()+
+   labs(
+    title="Guatemalan Migrant Children Time Spent in U.S. Detention Centers",
+    subtitle="Median days spent in detention centers by year.",
+    caption = "Source: NYT Data",
+    x= "Year",
+    y= "Days in Detention Centerr"
+  )
+
+ggsave("guat_year.png", width = 8, height = 5, dpi = 300)
+```
+
+**Takeaway (1–2 sentences):** This chart showcases the sharp rise in time Guatemalan children spent in detention centers during 2018.
+
+------------------------------------------------------------------------
+
+## Choropleth Map
+
+**Load Data**
+
+```{r}
+america_zip <- get_acs(
+  geography = "zcta",
+  variables =  "B01003_001",
+  year = 2018,
+  survey = "acs5",
+  geometry = TRUE
+) %>%
+rename(pop = estimate) %>%
+mutate(ZIP = as.character(GEOID))
+```
+
+**Filter by zipcode**
+
+```{r}
+kids_by_zip <- nyt_mc %>%
+  mutate(zip_chr = str_pad(as.character(sponsor_zipcode), 5, pad = "0")) %>%
+  filter(childs_country_of_origin == "Guatemala") %>%
+  count(zip_chr, name = "n_kids")
+```
+
+**Flordia Zips**
+
+```{r}
+fl_zips <- zip_code_db %>%
+  filter(state == "FL") %>%
+  transmute(ZIP = as.character(zipcode))
+
+zip_fl <- america_zip %>%
+  semi_join(fl_zips, by = "ZIP")
+```
+
+**Map**
+
+```{r}
+map_fl <- zip_fl %>%
+  left_join(kids_by_zip, by = c("ZIP" = "zip_chr")) %>%
+  mutate(
+    n_kids = replace_na(n_kids, 0),
+    rate_per_100k = (n_kids / pop) * 100000
+  )
+
+map_fl %>%
+  ggplot(aes(fill = rate_per_100k)) +  
+  geom_sf(color = "black") +
+  scale_fill_distiller(
+    palette = "Greens",
+    direction = 1,
+    labels = scales::comma_format()
+  ) +
+  labs(
+    title = "Guatemalan Migrant Children Concentration by Zipcode in Flordia",
+    subtitle = "Rate per 100,000 residents",
+    caption = "Source: U.S. Census ACS 5-year Estimates; NYT Data",
+    fill = "Children per 100k"
+  ) +
+  theme_void()
+
+ggsave("choropleth_.png", width=7, height=5, dpi=300)
+
+```
+
+## Takeaway: Guatemalan migrant children are most concentrated in ZIP codes near the southern tip of Florida. Their distribution is uneven statewide, with certain areas showing disproportionately higher rates per 100,000 residents.
+
+## AI Use Log
+
+Briefly list the prompts you used in ChatGPT to generate or fix code, and what you changed.
+
+-   Prompt 1: What is wrong with: guat_18_19 \<- guatemala %\>% mutate(days_in = childs_date_of_release - childs_date_of_entry) %\>% filter(year(childs_date_of_entry) == c(2018, 2019)) Warning: There was 1 warning in filter(). ℹ In argument: year(childs_date_of_entry) == c(2018, 2019). Caused by warning in year(childs_date_of_entry) == c(2018, 2019): ! longer object length is not a multiple of shorter object length
+-   Fixed: We never used this.
+-   Prompt 2: guat_year %\>% ggplot(aes(x=year, y=days)) why is this chart blank when the data has days for each year
+    -   Fixed:Didn't use this chunk either.
+-   Prompt 3: geom_line(color="ffd1df") + geom_point(color="fe7ec0") how to code color hex codes
+    -   Fixed: Put a \# in front of the hex code.
+-   Prompt 4: Error in summarise(): ℹ In argument: days = median(days_in). ℹ In group 1: relationship_of_sponsor = "Adult First Cousin". Caused by error: ! object 'days_in' not found Run rlang::last_trace() to see where the error occurred.
+    -   Fixed: Created days_in before summarising.
+-   Prompt 5: Just tell me what's wrong with the code: guat \<- nyt_mc %\>% filter(childs_country_of_origin == "Guatemala") %\>% group_by(relationship_of_sponsor) %\>% summarise(days =median(days_in)) %\>% ggplot(aes(x=relationship_of_sponsor, y=days)) + geom_col() Error in summarise(): ℹ In argument: days = median(days). ℹ In group 1: relationship_of_sponsor = "Adult First Cousin". Caused by error in sort.int(): ! 'x' must be atomic Run rlang::last_trace() to see where the error occurred.
+-   Prompt 6: what's wrong with this group_by(relationship_of_sponsor) %\>% summarise(days =median(days_in)) %\>% ggplot(aes(x=relationship_of_sponsor, y=days)) + geom_col()
+    -   Fixed: Created days_in
+-   Prompt 7: Error in UseMethod("mutate") : no applicable method for 'mutate' applied to an object of class "c('gg', 'ggplot')"
+-   Prompt 8: guat_year \<- guatemala %\>% mutate(year=year(childs_date_of_entry)) %\>% group_by(year)childs_date_of_entry %\>% summarise(days = median(days_in)) what is the unexpected symbol
+    -   Fixed: Fixed median(days_in)
+-   Prompt 9: where do i add color in this code nyt_mc %\>% filter(childs_country_of_origin == "Guatemala") %\>% mutate(days_in = childs_date_of_release - childs_date_of_entry) %\>% group_by(relationship_of_sponsor) %\>% summarise(days =median(days_in)) %\>% slice_max(days, n=5) %\>% ggplot(aes(x=relationship_of_sponsor, y=days)) + geom_col() + labs( title="Sponsor Types: Guatemalan Migrants", subtitle="Top 5 Sponsor Types for Guatemalan Migrant Children", caption = "Source: NYT Data", x= "Relationship of Sponsor", y= "Median Days in Detention Center" )
+    -   Fixed: Mapped variable to fill.
+-   Prompt 10: how do i make each x value a different color
+    -   Fixed: Map fill in aes
+-   Prompt 11: why arent the colors showing up nyt_mc %\>% filter(childs_country_of_origin == "Guatemala") %\>% mutate(days_in = childs_date_of_release - childs_date_of_entry) %\>% group_by(relationship_of_sponsor) %\>% summarise(days =median(days_in)) %\>% slice_max(days, n=5) %\>% ggplot(aes(x=relationship_of_sponsor, y=days)) + geom_col() + scale_fill_manual(values = c("#7e8c69","#9cad8c", "#f6b0bb", "#f1c8cb", "#ece0da")) + labs( title="Sponsor Types: Guatemalan Migrants", subtitle="Top 5 Sponsor Types for Guatemalan Migrant Children", caption = "Source: NYT Data", x= "Relationship of Sponsor", y= "Median Days in Detention Center" )
+    -   Fixed: Added fill
+-   Prompt 12: what does this mean my prof wants me to do? \## Appendix — Table snapshots (optional) {r tables_optional, eval=FALSE} \# HINT: Print your summary tables to quickly inspect them. \# df1 \# df2
+    -   Fixed: Didn't do it!
+-   Prompt 13: how to place the bar chart in desecending order
+    -   Fixed: Added reorder to aes
