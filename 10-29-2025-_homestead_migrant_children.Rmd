@@ -1,0 +1,266 @@
+---
+title: "10.29.2025 Homestead Migrant Children" 
+author: "Corrie Kelleigh" 
+date: "`r Sys.Date()`" 
+output: html_document 
+---
+
+# Setup
+
+```{r setup, eval=TRUE, message=FALSE, warning=FALSE}
+
+pacman::p_load(tidyverse, tidycensus, janitor, lubridate, dpylr, ggplot2, zipcodeR, crosswalkr, scales)
+
+nyt_mc <- read_csv("https://raw.githubusercontent.com/nytimes/hhs-child-migrant-data/refs/heads/main/data.csv", col_types = cols(ID = col_character(), 
+                                                `Child's Date of Entry` = col_date(format = "%m/%d/%y"), 
+                                                `Child's Date of Release` = col_date(format = "%m/%d/%y"), 
+                                                `Sponsor Category` = col_character()))
+nyt_mc <- clean_names(nyt_mc)
+
+
+```
+
+------------------------------------------------------------------------
+
+## Bar Charts
+
+While separated children were unable to be released to their detained parents, many instead went to unrelated sponsors – whose detention times in 2018 mirrored the national average. However, children released to family members spent an average of over 100 days processing through the system.
+
+```{r chartB_bar, eval=TRUE, message=FALSE, warning=FALSE}
+
+guat_top5_df <- nyt_mc %>%
+  filter(childs_country_of_origin == "Guatemala", sponsor_zipcode == "33030") %>%
+  mutate(days_in = as.numeric(childs_date_of_release - childs_date_of_entry)) %>%
+  group_by(relationship_of_sponsor) %>%
+  summarise(days = median(days_in, na.rm = TRUE),
+            n = n(), .groups = "drop") %>%
+  slice_max(days, n = 5) %>%
+  mutate(label = str_wrap(relationship_of_sponsor, width = 18))
+
+
+guat_top5 <- ggplot(
+  guat_top5_df,
+  aes(x = fct_reorder(label, days), y = days)
+) +
+  geom_col(fill = "#9CAF88") +
+  geom_text(aes(label = number(days, accuracy = 1)),
+            hjust = -0.1, size = 3.5) +
+  coord_flip(clip = "off") +
+  scale_y_continuous(expand = expansion(mult = c(0, .1))) +
+  labs(
+    title = "Homestead Sponsor Types Linked to Longest Detention Times",
+    subtitle = "Family sponsorship linked to 94% increase in processing.",
+    caption = "Source: NYT Data",
+    x = "Relationship of Sponsor",
+    y = "Median Days in Detention Center"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(plot.margin = margin(5.5, 30, 5.5, 5.5))
+
+
+guat_top5
+ggsave("guat_top5.png", guat_top5, width = 8, height = 5, dpi = 300)
+```
+
+**Data load**
+
+```{r chartA_line, eval=TRUE, message=FALSE, warning=FALSE}
+guatemala <- nyt_mc %>%
+  filter(childs_country_of_origin == "Guatemala") %>%
+  mutate(
+    childs_date_of_entry   = as.Date(childs_date_of_entry),
+    childs_date_of_release = as.Date(childs_date_of_release),
+    days_in = as.integer(childs_date_of_release - childs_date_of_entry)
+  )
+```
+
+```{r}
+national <- nyt_mc %>%
+    mutate(
+    childs_date_of_entry   = as.Date(childs_date_of_entry),
+    childs_date_of_release = as.Date(childs_date_of_release),
+    days_in = as.integer(childs_date_of_release - childs_date_of_entry)
+  )
+```
+
+```{r}
+guatemala_norm <- guatemala %>%
+  mutate(
+    sponsor_zipcode = str_pad(str_trim(as.character(sponsor_zipcode)), 5, pad = "0")
+  )
+
+guat_year <- guatemala_norm %>%
+  filter(sponsor_zipcode == "33030") %>% 
+  mutate(year = year(childs_date_of_entry)) %>%
+  group_by(year) %>%
+  summarise(days = median(days_in, na.rm = TRUE), .groups = "drop")
+```
+
+**Children Nationally Line Chart**
+
+The shelter was operated by Comprehensive Health Services under a [\$220 million contract](https://www.npr.org/2019/02/13/694138106/inside-the-largest-and-most-controversial-shelter-for-migrant-children-in-the-u-) with Health and Human Services. It was one of the first for-profit migrant shelters in America. Despite losing nearly [\$1.2 million](https://www.npr.org/2019/02/13/694138106/inside-the-largest-and-most-controversial-shelter-for-migrant-children-in-the-u-) daily, the government contract paid a [fixed](https://www.americanprogress.org/article/how-for-profit-companies-are-driving-immigration-detention-policies/?utm_source=chatgpt.com) and daily rate, as long as beds stayed full. Beds remained full for an average of 59 days, on par with the national rate of 60 days.
+
+```{r chartB_line, eval=TRUE, message=FALSE, warning=FALSE}
+nat_year <- national %>%
+  mutate(year = year(childs_date_of_entry)) %>%
+  group_by(year) %>%
+  summarise(days = median(days_in, na.rm = TRUE), .groups = "drop")
+
+nat_year %>%
+  ggplot(aes(x = year, y = days)) +
+  geom_line() +
+  geom_point() +
+  geom_text(aes(label = ifelse(year %in% c(2018, 2020), round(days), "")),
+            vjust = -0.8, size = 3.5) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.15))) +
+  labs(
+    title = "Impact of Trump's Zero Tolerance on Detention Times Nationally",
+    subtitle = "2018 surge, 2020 reset among all migrant children",
+    caption = "Source: NYT Data",
+    x = "Year",
+    y = "Median Days in Detention"
+  )
+
+ggsave("nat_year.png", width = 8, height = 5, dpi = 300)
+```
+
+**Guatemalan Children - Nationally Line Chart**
+
+After the shelter’s closing in 2019, the time children spent in migrant shelters drastically decreased – 23 days in comparison to the previous 59. Initially these findings were attributed to the detention center, but after further analysis the trend in Homestead closely follows the results for children of all ethnicities nationwide.
+
+```{r chartC_line, eval=TRUE, message=FALSE, warning=FALSE}
+  
+guat_year <- guatemala %>%
+  mutate(year = year(childs_date_of_entry)) %>%
+  group_by(year) %>%
+  summarise(days = median(days_in, na.rm = TRUE), .groups = "drop")
+
+guat_year %>%
+  ggplot(aes(x = as.numeric(year), y = as.numeric(days))) +
+  geom_line() +
+  geom_point() +
+  geom_text(
+    aes(label = ifelse(year %in% c(2018, 2020), days, "")), 
+    vjust = -0.8, size = 3.5
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.15))) +
+  labs(
+    title = "Trump's Zero Tolerance Order Spikes Detention Times for Guatemalan Children",
+    subtitle = "National coverage of Guatemalan child migrants. 2018 surge.",
+    caption = "Source: NYT Data",
+    x = "Year",
+    y = "Median Days in Detention Centers"
+  )
+
+ggsave("guat_year.png", width = 8, height = 5, dpi = 300)
+```
+
+**Guatemalan Children - Homestead, FL Line Chart**
+
+In 2018, the average time Guatemalan children spent in detention centers in Homestead spiked from 28 to 59. At that time, the Homestead Temporary Shelter for Unaccompanied Children reopened its doors to [thousands](https://www.miaminewtimes.com/news/homestead-miami-child-migrant-camp-will-increase-capacity-to-3200-kids-by-mid-april-11137424/). The Air Force Reserve base was temporarily turned into a migrant children detention center, with reports of sexual assault, abuse and inhumane conditions.
+
+```{r chartD_line, eval=TRUE, message=FALSE, warning=FALSE}
+  
+guat_year <- guatemala %>%
+  filter(
+    sponsor_zipcode == "33030",
+    childs_country_of_origin == "Guatemala") %>%
+  mutate(year = year(childs_date_of_entry)) %>%
+  group_by(year) %>%
+  summarise(days = median(days_in, na.rm = TRUE), .groups = "drop")
+
+guat_year %>%
+  ggplot(aes(x = year, y = days)) +
+  geom_line() +
+  geom_point() +
+  geom_text(aes(label = ifelse(year %in% c(2018, 2020), round(days), "")),
+            vjust = -0.8, size = 3.5) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.15))) +
+  labs(
+    title = "Guatemalan Migrant Children Time Spent in Homestead Detention Center",
+    subtitle = "Median days in detention by entry year (ZIP 33030). Spike visible in 2018.",
+    caption = "Source: NYT Data",
+    x = "Year",
+    y = "Median Days in Detention"
+  )
+
+ggsave("guat_year_FL.png", width = 8, height = 5, dpi = 300)
+```
+
+**Load Data**
+
+```{r results=FALSE, message=FALSE, warning=FALSE}
+america_zip <- get_acs(
+  geography = "zcta",
+  variables =  "B01003_001",   
+  year = 2018,    #2018 only to focus on the year of influx
+  survey = "acs5",
+  geometry = TRUE
+) %>%
+rename(pop = estimate) %>%
+mutate(ZIP = as.character(GEOID))
+```
+
+**Filter by zipcode**
+
+```{r}
+kids_by_zip <- nyt_mc %>%
+  mutate(zip_chr = str_pad(as.character(sponsor_zipcode), 5, pad = "0")) %>%
+  filter(childs_country_of_origin == "Guatemala") %>%
+  count(zip_chr, name = "n_kids")
+```
+
+**Florida Zips**
+
+```{r}
+fl_zips <- zip_code_db %>%   #https://github.com/gavinrozzi/zipcodeR
+  filter(state == "FL") %>%
+  transmute(ZIP = as.character(zipcode))
+
+maps_zip_fl <- america_zip %>%
+  semi_join(fl_zips, by = "ZIP")
+```
+
+**Map**
+
+Guatemala accounts for roughly 46 percent of immigrant children in America – the largest portion among the 112 countries in data that the New York Times obtained from the U.S. Department of Health and Human services and [published to GitHub](https://github.com/nytimes/hhs-child-migrant-data). The highest concentration of Guatemalan children is in the 33030 zip code in Homestead, Florida.
+
+```{r}
+map_fl <- maps_zip_fl %>%
+  left_join(kids_by_zip, by = c("ZIP" = "zip_chr")) %>%
+  mutate(
+    n_kids = replace_na(n_kids, 0),
+    rate_per_100k = (n_kids / pop) * 100000
+  )
+
+map_fl %>%
+  ggplot(aes(fill = rate_per_100k)) +  
+  geom_sf(color = "black") +
+  scale_fill_distiller(
+    palette = "Greens",
+    direction = 1,
+    labels = comma_format()
+  ) +
+  labs(
+    title = "Guatemalan Migrant Children Concentration by ZIP Code in Flordia",
+    subtitle = "Concentration of children increases towards tip of Florida",
+    caption = "Source: U.S. Census ACS 5-year Estimates; NYT Data",
+    fill = "Children per 100k"
+  ) +
+  theme_void()
+
+ggsave("choropleth_.png", width=7, height=5, dpi=300)
+
+```
+
+## Limitations
+
+There was a lack of evidence to substantiate any claims beyond the minimal data collected. For the topic, it was an amazing data set, but it doesn't allow for further examination of the data, or the collection of specific human stories. The story can only be told through numbers and hypothesis.
+
+## Methods
+
+This analysis primarily relies on the New York Times data set on unaccompanied migrant children (2012-2023), which includes information on the child's country of origin, time spent processing through detention centers, sponsor zipcode and sponsor relationship. This data was combined with the U.S. Census Bureau’s American Community Survey 5-year estimates (2018) at the zip code tabulation (ZCTA) level. Each graphic design used a multitude of data frames and methods.
+
+For the map, ACS 2018 data were filtered to the ZCTA level, then narrowed to Florida  ZIP codes that had unaccompanied Guatemalan migrant children. The dataset “zip_fl” was left-joined with “kids_by_zip” by zip code and filtered to only include data from 2018. The data was then mapped by Florida zip codes at a rate per 100,000 population. Non-applicable values were cleared, and Florida zip codes were shaded in green, with darker hues representing higher concentrations of children.
+
+To reproduce this analysis, the following files are required: Code was executed in **R.4.4.1**, with full reproducibility ensured by following the R Markdowns and knitted files.
